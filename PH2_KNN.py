@@ -1,87 +1,93 @@
-from sklearn import datasets
-from sklearn.model_selection import train_test_split
-import pickle, random
 
 
-# read the pickle file: pick_in
-pick_in = open('data1.pickle', 'rb')
-data = pickle.load(pick_in)
-pick_in.close()
-
-print('data read complete')
-
-
-random.shuffle(data)
-
-print('shuffle complete')
-
-features = []
-labels = []
-
-for feature, label in data:
-    features.append(feature)
-    labels.append(label)
-
-print('feature and label load complete')
-
-X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2)
-
-
+from torchvision import datasets, transforms
 import numpy as np
-import math
-from collections import Counter
-
-# def tDW(h, y):
-Q_dp = [
-        [
-
-        ]
-      ] #DP 2-D list
-
-q_dp = [
-        [
-
-        ]
-      ] #DP 2-D list
-# border case relaxed
-def P2DHMDM(h, y): #!! input img data array must not be flattened !!
-    buf = 0.
-    for i in h[:, 0]:
-        for x in y[:, 0]:
-            for j in h[0, :]:
-                for y in y[0, :]:
-                        if x >= 1 and j >=1 and y >= 2:
-                            Q_ijxy = math.sqrt((math.fabs((h[i, j]) - min(y[x-1,y], y[x, y], y[x+1, y])))**2) + min(Q_dp[j-1, y-2], Q_dp[j-1, y-1], Q_dp[j-1, y])
-                            Q_dp.append(Q_ijxy) #change insert location
-                        else:
-                            Q_ijxy = math.sqrt((math.fabs(h[i,j] - y[x, y]))**2)
-                            Q_dp.append(Q_ijxy)
-
-            q_ij = Q_dp[0,:] + min(q_dp[j-1, y-2], q_dp[j-1, y-1], q_dp[j-1, y])
-
-    return q_dp[:,:].sum()
-
-# Implement KNN
-def kNNClassify(K, X_train, y_train, X_predict): # LAZY classifier
-    # distances = [sqrt(np.sum((x-X_predict)**2)) for x in X_train]  # change distance measure here
-    distances = [P2DHMDM(X_predict, x) for x in X_train]
-    sort = np.argsort(distances) # Index list
-    topK = [y_train[i] for i in sort[:K]]
-    votes = Counter(topK)
-    y_predict = votes.most_common(1)[0][0]
-    return y_predict
-
-def kNN_predict(K, X_train, y_train, X_predict, y_predict):  # accuracy counter
-    correct = 0
-    for i in range(len(X_predict)):
-        if y_predict[i] == kNNClassify(K, X_train, y_train, X_predict[i]):
-            correct += 1
-
-    print(correct/len(X_predict))
+from sklearn.metrics import accuracy_score
+import torch
+from tqdm import tqdm
+import time
 
 
-print("Training accuracy is ", end='')
-kNN_predict(3, X_train, y_train, X_train, y_train)
-print("Test accuracy is ", end='')
-kNN_predict(3, X_train, y_train, X_test, y_test)
+# matrix func
+def KNN(train_x, train_y, test_x, test_y, k):
+    since = time.time()
 
+    m = test_x.size(0)
+    n = train_x.size(0)
+
+    # cal Eud distance mat
+    print("cal dist matrix")
+    xx = (test_x ** 2).sum(dim=1, keepdim=True).expand(m, n)
+    yy = (train_x ** 2).sum(dim=1, keepdim=True).expand(n, m).transpose(0, 1)
+
+    dist_mat = xx + yy - 2 * test_x.matmul(train_x.transpose(0, 1))
+    mink_idxs = dist_mat.argsort(dim=-1)
+
+    res = []
+    for idxs in mink_idxs:
+        # voting
+        res.append(np.bincount(np.array([train_y[idx] for idx in idxs[:k]])).argmax())
+
+    assert len(res) == len(test_y)
+    print("acc", accuracy_score(test_y, res))
+    time_elapsed = time.time() - since
+    print('KNN mat training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+
+
+def cal_distance(x, y):
+    return torch.sum((x - y) ** 2) ** 0.5
+
+
+# iteration func
+def KNN_by_iter(train_x, train_y, test_x, test_y, k):
+    since = time.time()
+
+    # cal distance
+    res = []
+    for x in tqdm(test_x):
+        dists = []
+        for y in train_x:
+            dists.append(cal_distance(x, y).view(1))
+
+        idxs = torch.cat(dists).argsort()[:k]
+        res.append(np.bincount(np.array([train_y[idx] for idx in idxs])).argmax())
+
+    # print(res[:10])
+    print("acc", accuracy_score(test_y, res))
+
+    time_elapsed = time.time() - since
+    print('KNN iter training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+
+
+if __name__ == "__main__":
+
+    train_dataset = datasets.FashionMNIST(root="./data", transform=transforms.ToTensor(), train=True, download=True)
+    test_dataset = datasets.FashionMNIST(root="./data", transform=transforms.ToTensor(), train=False, download=True)
+
+    # build train&test data
+    train_x = []
+    train_y = []
+    for i in range(len(train_dataset)):
+        img, target = train_dataset[i]
+        train_x.append(img.view(-1))
+        train_y.append(target)
+
+        if i > 5000:
+            break
+
+    # print(set(train_y))
+
+    test_x = []
+    test_y = []
+    for i in range(len(test_dataset)):
+        img, target = test_dataset[i]
+        test_x.append(img.view(-1))
+        test_y.append(target)
+
+        if i > 200:
+            break
+
+    print("classes:", set(train_y))
+
+    KNN(torch.stack(train_x), train_y, torch.stack(test_x), test_y, 7)
+    KNN_by_iter(torch.stack(train_x), train_y, torch.stack(test_x), test_y, 7)

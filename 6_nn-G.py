@@ -16,16 +16,16 @@ kwargs = {'num_workers': 0, 'pin_memory': True}
 
 
 # Create data loaders
-train_set = torchvision.datasets.FashionMNIST(root='../data', train=True, download=True,
+train_set = torchvision.datasets.FashionMNIST(root='./data', train=True, download=True,
                                               transform=transforms.Compose([ToTensor()]))
 train_loader = DataLoader(train_set, batch_size=128, shuffle=True, **kwargs)
 
-test_set = torchvision.datasets.FashionMNIST(root='../data', train=False, download=True,
+test_set = torchvision.datasets.FashionMNIST(root='./data', train=False, download=True,
                                              transform=transforms.Compose([ToTensor()]))
 test_loader = DataLoader(test_set, batch_size=128, shuffle=True, **kwargs)
 
 lr = 1e-2
-epochs = 30
+epochs = 50
 
 
 class Net(nn.Module):

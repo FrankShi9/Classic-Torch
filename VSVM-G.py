@@ -1,156 +1,137 @@
-import argparse
-import time
-
+from torchvision.transforms import transforms as T
+import pandas as pd
 import numpy as np
-import random
-import pickle, os, cv2
+import os, cv2
+from torch.utils.data import Dataset, DataLoader
 import torch
-import torchvision
-from torch import nn, optim
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torchvision.transforms import transforms
-
-parser = argparse.ArgumentParser(description='PyTorch MNIST Training')
-parser.add_argument('--batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for training (default: 128)')
-parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for testing (default: 128)')
-parser.add_argument('--epochs', type=int, default=10, metavar='N',
-                    help='number of epochs to train')
-parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
-                    help='learning rate')
-parser.add_argument('--no-cuda', action='store_true', default=True,
-                    help='disables CUDA training')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
-                    help='random seed (default: 1)')
-args = parser.parse_args(args=[])
-
-device = torch.device("cuda")
-torch.manual_seed(args.seed)
-kwargs = {'num_workers': 0, 'pin_memory': True}
+import torch.nn as nn
+from torch.autograd import Variable
+from torchvision import datasets, transforms, utils
+from torch.utils.data.sampler import SubsetRandomSampler
+from torch.nn import functional as F
+import matplotlib.pyplot as plt
 
 
-# Preparing Data
-# dir = "F:/Surf Road Detect/TRAIN&TEST/trainImages"
-#
-# # categories = ['Pothole', 'Road Marking']
-#
-# categories = ['Alligator', 'Joint', 'Longitudal', 'Manholes', 'Oil Marks', 'Pothole', 'Road Marking', 'Shadow',
-#               'Transverse']
-#
-# data = []
-#
-#
-# # read the pickle file: pick_in
-# pick_in = open('data1.pickle', 'rb')
-# data = pickle.load(pick_in)
-# pick_in.close()
-#
-# print('data read complete')
-#
-# random.shuffle(data)
-#
-# print('shuffle complete')
-#
-# features = []
-# labels = []
-#
-# for feature, label in data:
-#     features.append(feature)
-#     labels.append(label)
-#
-# print('feature and label load complete')
-#
-#
-# x_train, x_test, y_train, y_test = train_test_split(features, labels, test_size=0.3)
-# print('split complete')
-
-
-train_set = torchvision.datasets.FashionMNIST(root='../data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor()]))
-train_loader = DataLoader(train_set, batch_size=128, shuffle=True, **kwargs)
-
-test_set = torchvision.datasets.FashionMNIST(root='../data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor()]))
-test_loader = DataLoader(test_set, batch_size=128, shuffle=True, **kwargs)
+# Don't change batch size
+batch_size = 64
+# Hyper-parameters
+input_size = 784  # (dimension of image 28 * 28)
+num_classes = 1  # (just -1 and 1 image)
+num_epochs = 10  # number of times you will iterate through the full training data
+learning_rate = 0.0001  ## step size used by SGD
+momentum = 0.0  ## Momentum is a moving average of our gradients (helps to keep direction)
 
 
 
 
-class SVM(nn.Module):
-    """Support Vector Machine"""
-    # SGD can't read model para issue
+train_data = datasets.FashionMNIST('./data/', train=True, download=True,
+                                   transform=transforms.Compose([
+                                       transforms.ToTensor(),
+                                       transforms.Normalize((0.1307,), (0.3081,))
+                                   ]))
+test_data = datasets.FashionMNIST('./data/', train=False, download=True,
+                                  transform=transforms.Compose([
+                                      transforms.ToTensor(),
+                                      transforms.Normalize((0.1307,), (0.3081,))
+                                  ]))
+
+
+
+## USE THIS SNIPPET TO GET BINARY TRAIN/TEST DATA
+subset_indices = ((train_data.train_labels == 0) + (train_data.train_labels == 1)).nonzero().view(-1)
+
+train_loader = torch.utils.data.DataLoader(dataset=train_data,
+                                           batch_size=batch_size,
+                                           shuffle=False,
+                                           sampler=SubsetRandomSampler(subset_indices))
+
+subset_indices = ((test_data.test_labels == 0) + (test_data.test_labels == 1)).nonzero().view(-1)
+
+test_loader = torch.utils.data.DataLoader(dataset=test_data,
+                                          batch_size=batch_size,
+                                          shuffle=False,
+                                          sampler=SubsetRandomSampler(subset_indices))
+
+
+## Displaying some sample images in train_loader with its ground truth
+
+# samples = enumerate(train_loader)
+# batch_idx, (sample_data, sample_targets) = next(samples)
+# sample_data.shape
+
+# fig = plt.figure()
+# for i in range(6):
+#   plt.subplot(2,3,i+1)
+#  plt.tight_layout()
+#  plt.imshow(sample_data[i][0], cmap='gray', interpolation='none')
+#  plt.title("Ground Truth: {}".format(sample_targets[i]))
+#  plt.xticks([])
+#    plt.yticks([])
+#    fig
+
+
+# total_step = len(train_loader)
+# print(total_step)
+
+class SVM_Loss(nn.modules.Module):
     def __init__(self):
-        super(SVM, self).__init__()
-        self.w = nn.Parameter(torch.randn(1, 784), requires_grad=True).cuda()
-        self.b = torch.ones(128, 1).cuda()  # vsv
+        super(SVM_Loss, self).__init__()
 
-    # vsv
-    def forward(self, x):
-        print(x.size())
-        print(((1 / 512)*torch.ones(1, 28)).size())
-        print(((x.matmul(self.w.t()))).size())
-        h = ((1 / 512)*torch.ones(1, 28)) @ ((x.matmul(self.w.t()) + self.b) ** 9)
-        return h
+    def forward(self, outputs, labels):
+        return torch.sum(torch.clamp(1 - outputs.t() * labels, min=0)) / batch_size
 
 
-def train(args, model, device, train_loader, optimizer, epoch):
-    model.train()
-    for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.to(device), target.to(device)
-        data = data.view(data.size(0), 28 * 28)
+# SVM regression model and Loss
+svm_model = nn.Linear(input_size, num_classes)
+# model = LogisticRegression(input_size,num_classes)
 
-        # use adverserial data to train the defense model
-        # adv_data = adv_attack(model, data, target, device=device)
+## Loss criteria and SGD optimizer
+svm_loss_criteria = SVM_Loss()
 
-        # clear gradients
-        optimizer.zero_grad()
+# loss_criteria = nn.CrossEntropyLoss()
 
-        # compute loss
-        # loss = F.cross_entropy(model(adv_data), target)
-        loss = F.cross_entropy(model(data), target)
+svm_optimizer = torch.optim.SGD(svm_model.parameters(), lr=learning_rate, momentum=momentum)
 
-        # get gradients and update
-        loss.backward()
-        optimizer.step()
+total_step = len(train_loader)
+for epoch in range(num_epochs):
+    avg_loss_epoch = 0
+    batch_loss = 0
+    total_batches = 0
+    for i, (images, labels) in enumerate(train_loader):
+        # Reshape images to (batch_size, input_size)
+        images = images.reshape(-1, 28 * 28)
+        labels = Variable(2 * (labels.float() - 0.5))
 
+        # Forward pass
+        outputs = svm_model(images)
+        loss_svm = svm_loss_criteria(outputs, labels)
 
-'predict function'
-def eval_test(model, device, test_loader):
-    model.eval()
-    test_loss = 0
-    correct = 0
-    with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            data = data.view(data.size(0), 28 * 28)
-            output = model(data)
-            test_loss += F.cross_entropy(output, target, size_average=False).item()
-            pred = output.max(1, keepdim=True)[1]
-            correct += pred.eq(target.view_as(pred)).sum().item()
-    test_loss /= len(test_loader.dataset)
-    test_accuracy = correct / len(test_loader.dataset)
-    return test_loss, test_accuracy
+        # Backward and optimize
+        svm_optimizer.zero_grad()
+        loss_svm.backward()
+        svm_optimizer.step()
 
+        # print("Model's parameter after the update:")
+        # for param2 in svm_model.parameters():
+        #   print(param2)
+        total_batches += 1
+        batch_loss += loss_svm.item()
 
-def train_model():
-    model = SVM().to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr)
-    for epoch in range(1, args.epochs + 1):
-        start_time = time.time()
+    avg_loss_epoch = batch_loss / total_batches
+    print('Epoch [{}/{}], Averge Loss:for epoch[{}, {:.4f}]'
+          .format(epoch + 1, num_epochs, epoch + 1, avg_loss_epoch))
 
-        # training
-        train(args, model, device, train_loader, optimizer, epoch)
+    # Test the SVM Model
+correct = 0.
+total = 0.
+for images, labels in test_loader:
+    images = images.reshape(-1, 28 * 28)
 
-        # get trnloss and testloss
-        trnloss, trnacc = eval_test(model, device, train_loader)
-        testloss, testacc = eval_test(model, device, test_loader)
+    outputs = svm_model(images)
+    predicted = outputs.data >= 0
+    total += labels.size(0)
+    correct += (predicted.view(-1).long() == labels).sum()
 
-        # print trnloss and testloss
-        print('Epoch ' + str(epoch) + ': ' + str(int(time.time() - start_time)) + 's', end=', ')
-        print('trn_loss: {:.4f}, trn_acc: {:.2f}%'.format(trnloss, 100. * trnacc), end=', ')
-        print('test_loss: {:.4f}, adv_acc: {:.2f}%'.format(testloss, 100. * testacc))
-
-
-    return model
-
-model = train_model()
+print('Accuracy of the model on the test images: %f %%' % (100 * (correct.float() / total)))
+print("the learning rate is ", learning_rate)
+print("the momentum is", momentum)
